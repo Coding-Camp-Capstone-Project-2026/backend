@@ -29,14 +29,10 @@ router.post('/', authenticateToken, async (req, res) => {
       [req.user.id]
     );
 
-    if (cycles.length < 3) {
-      // Not enough data — use simple average or default
-      const avgCycle = cycles.length > 0
-        ? Math.round(cycles.reduce((sum, c) => sum + (c.cycle_length || 28), 0) / cycles.length)
-        : 28;
-
-      const lastCycle = cycles[cycles.length - 1];
-      const lastStart = lastCycle ? new Date(lastCycle.start_date) : new Date();
+    if (cycles.length === 0) {
+      // No data at all — use default average of 28
+      const avgCycle = 28;
+      const lastStart = new Date();
       const nextDate = new Date(lastStart);
       nextDate.setDate(nextDate.getDate() + avgCycle);
 
@@ -61,7 +57,7 @@ router.post('/', authenticateToken, async (req, res) => {
         predicted_cycle_length: avgCycle,
         confidence: 0.5,
         model_version: 'simple_average',
-        message: 'Not enough cycle data for ML prediction. Using simple average. Log at least 3 cycles for better predictions.'
+        message: 'No cycle data available. Log your first cycle to get AI predictions.'
       });
     }
 
@@ -118,7 +114,6 @@ router.post('/', authenticateToken, async (req, res) => {
 
       const nextDateStr = formatDateLocal(nextDate);
 
-      // Save prediction
       const [result] = await pool.execute(
         `INSERT INTO predictions (user_id, predicted_next_date, predicted_cycle_length, confidence, model_version)
          VALUES (?, ?, ?, ?, ?)`,
@@ -127,7 +122,7 @@ router.post('/', authenticateToken, async (req, res) => {
           nextDateStr,
           prediction.predicted_cycle_length,
           prediction.confidence,
-          prediction.model_version || '1.0'
+          prediction.model_version || '2.0'
         ]
       );
 
@@ -136,7 +131,8 @@ router.post('/', authenticateToken, async (req, res) => {
         predicted_next_date: nextDateStr,
         predicted_cycle_length: prediction.predicted_cycle_length,
         confidence: prediction.confidence,
-        model_version: prediction.model_version || '1.0'
+        model_version: prediction.model_version || '2.0',
+        message: cycles.length < 3 ? 'Prediksi AI aktif dengan data terbatas. Catat minimal 3 siklus untuk meningkatkan akurasi.' : undefined
       });
     } catch (mlError) {
       // ML service unavailable — fallback to simple average
