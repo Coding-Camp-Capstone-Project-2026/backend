@@ -82,9 +82,9 @@ router.get('/trends', authenticateToken, async (req, res) => {
       }
     }
 
-    // 2. Fetch daily logs for trend analysis (up to last 30 logs)
+    // 2. Fetch ALL daily logs for comprehensive trend analysis (no limit for full historical tracking)
     const [logs] = await pool.execute(
-      'SELECT * FROM daily_logs WHERE user_id = ? ORDER BY date DESC LIMIT 30',
+      'SELECT * FROM daily_logs WHERE user_id = ? ORDER BY date DESC',
       [userId]
     );
 
@@ -183,13 +183,61 @@ router.get('/trends', authenticateToken, async (req, res) => {
       count: symptomFreq[name]
     })).sort((a, b) => b.count - a.count);
 
+    // 5. Monthly aggregation for historical tracking
+    const monthlyAggregation = {};
+    logs.forEach(l => {
+      const d = formatDateLocal(l.date);
+      if (!d) return;
+      const monthKey = d.substring(0, 7); // YYYY-MM
+      if (!monthlyAggregation[monthKey]) {
+        monthlyAggregation[monthKey] = {
+          month: monthKey,
+          totalLogs: 0,
+          moodSum: 0,
+          moodCount: 0,
+          sleepSum: 0,
+          sleepCount: 0,
+          stressSum: 0,
+          stressCount: 0,
+          fastingDays: 0,
+          symptomCount: 0
+        };
+      }
+      const agg = monthlyAggregation[monthKey];
+      agg.totalLogs++;
+      if (l.mood) { agg.moodSum += l.mood; agg.moodCount++; }
+      if (l.sleep_quality) { agg.sleepSum += l.sleep_quality; agg.sleepCount++; }
+      if (l.stress_level) { agg.stressSum += l.stress_level; agg.stressCount++; }
+      if (l.is_fasting) agg.fastingDays++;
+      if (l.symptoms) {
+        try {
+          const arr = JSON.parse(l.symptoms);
+          if (Array.isArray(arr)) agg.symptomCount += arr.length;
+        } catch (e) { /* skip */ }
+      }
+    });
+
+    const monthlyData = Object.values(monthlyAggregation)
+      .map(m => ({
+        month: m.month,
+        totalLogs: m.totalLogs,
+        avgMood: m.moodCount > 0 ? parseFloat((m.moodSum / m.moodCount).toFixed(1)) : null,
+        avgSleep: m.sleepCount > 0 ? parseFloat((m.sleepSum / m.sleepCount).toFixed(1)) : null,
+        avgStress: m.stressCount > 0 ? parseFloat((m.stressSum / m.stressCount).toFixed(1)) : null,
+        fastingDays: m.fastingDays,
+        symptomCount: m.symptomCount
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+
     res.json({
       cycleStats,
       recentCyclesList: formattedCycles.slice(0, 6),
       correlation,
       symptomDistribution: sortedSymptoms,
       moodDistribution: moodFreq,
-      lifestyleTrends
+      lifestyleTrends: lifestyleTrends.slice(-30), // Latest 30 for chart display
+      totalDailyLogs: logs.length,
+      monthlyData
     });
   } catch (err) {
     console.error('Get analytics error:', err);
